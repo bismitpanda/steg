@@ -401,12 +401,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "856b5cb0902c2b6d65d5fd97dfa30f9b70c7538e770b98eab5ed52d8db923e01"
 
 [[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
 name = "image"
 version = "0.24.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -779,7 +773,6 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "clap",
- "hex",
  "image",
  "sha3",
 ]

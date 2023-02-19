@@ -8,9 +8,9 @@ edition = "2021"
 [dependencies]
 aes-gcm = "0.10.1"
 clap = { version = "4.1.4", features = ["derive"] }
-hex = "0.4.3"
 image = "0.24.5"
 sha3 = "0.10.6"
 
 [profile.release]
 lto = true
+panic = "abort"
