@@ -1,12 +1,14 @@
-use std::{fs::File, io::{Read, BufReader, Write}};
+use std::{
+    fs::File,
+    io::{BufReader, Read, Write},
+};
 
-use clap::{ArgGroup, Parser};
-use sha3::{Digest, Sha3_256};
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm,
-    AeadCore
+    AeadCore, Aes256Gcm,
 };
+use clap::{ArgGroup, Parser};
+use sha3::{Digest, Sha3_256};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "This is a utility to hide messages inside image files in an encrypted format.", long_about = None)]
@@ -40,7 +42,7 @@ const MASKS: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
 fn u8_to_bits(inp: u8) -> [u8; 8] {
     let mut out = [0u8; 8];
     for i in 0..8 {
-        out[7-i] = (inp & MASKS[i]) >> i
+        out[7 - i] = (inp & MASKS[i]) >> i
     }
 
     out
@@ -66,7 +68,7 @@ fn set_to_lsb(src: Vec<u8>, dst: Vec<u8>) -> Vec<u8> {
 
     for byte in src {
         bits.extend_from_slice(&u8_to_bits(byte));
-    };
+    }
 
     let n = bits.len();
     for i in 0..dst.len() {
@@ -97,7 +99,10 @@ fn get_from_lsb(bytes: Vec<u8>) -> Vec<u8> {
         bits.push(bytes.next().unwrap() & 1)
     }
 
-    let out: Vec<_> = bits.chunks_exact(8).map(|chunk| bits_to_u8(chunk)).collect();
+    let out: Vec<_> = bits
+        .chunks_exact(8)
+        .map(|chunk| bits_to_u8(chunk))
+        .collect();
     out
 }
 
@@ -123,14 +128,27 @@ fn main() {
 
         let encode_data = [nonce.to_vec(), ciphertext].concat();
 
-        image::save_buffer(args.outfile, &set_to_lsb(encode_data, picture.clone().into_bytes()), picture.width(), picture.height(), picture.color()).unwrap();
+        image::save_buffer(
+            args.outfile,
+            &set_to_lsb(encode_data, picture.clone().into_bytes()),
+            picture.width(),
+            picture.height(),
+            picture.color(),
+        )
+        .unwrap();
     } else if args.decode {
         let buf_reader = BufReader::new(infile);
-        let img = image::load(BufReader::new(buf_reader), image::ImageFormat::from_path(args.infile).unwrap()).unwrap();
+        let img = image::load(
+            BufReader::new(buf_reader),
+            image::ImageFormat::from_path(args.infile).unwrap(),
+        )
+        .unwrap();
 
         let ciphertext = get_from_lsb(img.into_bytes());
 
-        let plaintext = cipher.decrypt(ciphertext[..12].into(), &ciphertext[12..]).unwrap();
+        let plaintext = cipher
+            .decrypt(ciphertext[..12].into(), &ciphertext[12..])
+            .unwrap();
 
         let mut file = std::fs::File::create(args.outfile).unwrap();
         file.write_all(&plaintext).unwrap();
