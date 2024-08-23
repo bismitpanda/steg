@@ -1,156 +1,157 @@
-use std::{
-    fs::File,
-    io::{BufReader, Read, Write},
-};
+mod bits;
+mod cmd;
 
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
-    AeadCore, Aes256Gcm,
+    AeadCore, Aes256Gcm, Nonce,
 };
-use clap::{ArgGroup, Parser};
-use sha3::{Digest, Sha3_256};
+use clap::Parser;
+use image::ImageFormat;
+use sha2::{Digest, Sha256};
 
-#[derive(Parser, Debug)]
-#[command(author, version, about = "This is a utility to hide messages inside image files in an encrypted format.", long_about = None)]
-#[command(group(
-    ArgGroup::new("mode")
-        .required(true)
-        .args(["encode", "decode"])
-))]
-struct Args {
-    #[arg(short, long, requires = "picture")]
-    encode: bool,
+use bits::{convert_from_bits, convert_to_bits};
 
-    #[arg(short, long)]
-    decode: bool,
-
-    #[arg(short = 'c', long)]
-    pass_phrase: String,
-
-    #[arg(short, long)]
-    picture: Option<String>,
-
-    #[arg(short, long)]
-    infile: String,
-
-    #[arg(short, long)]
-    outfile: String,
-}
-
-const MASKS: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
-
-fn u8_to_bits(inp: u8) -> [u8; 8] {
-    let mut out = [0u8; 8];
-    for i in 0..8 {
-        out[7 - i] = (inp & MASKS[i]) >> i
-    }
-
-    out
-}
-
-fn bits_to_u8(bits: &[u8]) -> u8 {
-    let mut out = 0;
-    out |= bits[0];
-    for bit in &bits[1..8] {
-        out <<= 1;
-        out |= bit;
-    }
-
-    out
-}
-
-fn set_to_lsb(src: Vec<u8>, dst: Vec<u8>) -> Vec<u8> {
+fn extract_lsb(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut bits = Vec::new();
 
-    let len = (src.len() as u16).to_be_bytes();
-    out.extend_from_slice(&len);
-
-    for byte in src {
-        bits.extend_from_slice(&u8_to_bits(byte));
+    for &byte in bytes {
+        out.push(byte & 1);
     }
 
-    let n = bits.len();
-    for i in 0..dst.len() {
-        if i < n {
-            let out_bit = ((dst[i] >> 1) << 1) | bits[i];
-            out.push(out_bit);
+    out
+}
+
+fn modify_lsb(bytes: &mut [u8], bits: &[u8]) {
+    for (i, bit) in bits.iter().enumerate() {
+        if *bit == 1 {
+            bytes[i] |= 1;
         } else {
-            out.push(dst[i]);
+            bytes[i] &= !1;
         }
     }
-
-    out
-}
-
-fn get_from_lsb(bytes: Vec<u8>) -> Vec<u8> {
-    let mut n_bytes = Vec::new();
-    let mut bytes = bytes.iter();
-
-    for _ in 0..16 {
-        let i = *bytes.next().unwrap();
-        n_bytes.push(i & 1);
-    }
-
-    let n = u16::from_be_bytes([bits_to_u8(&n_bytes[0..8]), bits_to_u8(&n_bytes[8..16])]);
-    let mut bits = Vec::new();
-
-    for _ in 0..(n * 8) {
-        bits.push(bytes.next().unwrap() & 1)
-    }
-
-    let out: Vec<_> = bits
-        .chunks_exact(8)
-        .map(|chunk| bits_to_u8(chunk))
-        .collect();
-    out
 }
 
 fn main() {
-    let args = Args::parse();
-    let mut hasher = Sha3_256::new();
+    let args = cmd::Command::parse();
 
-    let mut infile = File::open(args.infile.clone()).unwrap();
+    match args.action {
+        cmd::Actions::Encode(args) => {
+            let img_format =
+                ImageFormat::from_path(&args.image_path).expect("Could not find extension.");
+            match img_format {
+                ImageFormat::Bmp | ImageFormat::Png | ImageFormat::Tiff | ImageFormat::Ico => {
+                    let img =
+                        image::open(&args.image_path).expect("Invalid/Not supported image file");
+                    let mut image_bytes = img.clone().into_bytes();
 
-    hasher.update(args.pass_phrase);
-    let key = hasher.finalize();
+                    let input =
+                        std::fs::read(args.infile).expect("Cannot read provided input file");
 
-    let cipher = Aes256Gcm::new(&key);
+                    if image_bytes.len() < (input.len() + 6) * 8 {
+                        println!("Provided input is too large to be stored.");
+                    }
 
-    if args.encode {
-        let mut indata = Vec::new();
-        infile.read_to_end(&mut indata).unwrap();
+                    let input = args.key.map_or_else(
+                        || [&[0], input.as_slice()].concat(),
+                        |key| {
+                            let key = Sha256::digest(key);
+                            let cipher = Aes256Gcm::new(&key);
+                            let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
-        let picture = image::open(args.picture.unwrap()).unwrap();
+                            let encrypted_input = cipher
+                                .encrypt(&nonce, input.as_slice())
+                                .expect("Could not encrypt input");
 
-        let nonce = Aes256Gcm::generate_nonce(OsRng);
-        let ciphertext = cipher.encrypt(&nonce, indata.as_ref()).unwrap();
+                            [&[1], nonce.as_slice(), encrypted_input.as_slice()].concat()
+                        },
+                    );
 
-        let encode_data = [nonce.to_vec(), ciphertext].concat();
+                    let input_bits = convert_to_bits(&input);
+                    modify_lsb(&mut image_bytes, &input_bits);
 
-        image::save_buffer(
-            args.outfile,
-            &set_to_lsb(encode_data, picture.clone().into_bytes()),
-            picture.width(),
-            picture.height(),
-            picture.color(),
-        )
-        .unwrap();
-    } else if args.decode {
-        let buf_reader = BufReader::new(infile);
-        let img = image::load(
-            BufReader::new(buf_reader),
-            image::ImageFormat::from_path(args.infile).unwrap(),
-        )
-        .unwrap();
+                    image::save_buffer(
+                        &args.outfile,
+                        &image_bytes,
+                        img.width(),
+                        img.height(),
+                        img.color(),
+                    )
+                    .expect("Could not save modified image buffer");
+                }
 
-        let ciphertext = get_from_lsb(img.into_bytes());
+                ImageFormat::Gif => todo!("GIF files are currently not supported."),
+                ImageFormat::Jpeg => todo!("JPEG files are currently not supported."),
 
-        let plaintext = cipher
-            .decrypt(ciphertext[..12].into(), &ciphertext[12..])
-            .unwrap();
+                _ => {
+                    panic!("Image format not supported.")
+                }
+            }
+        }
 
-        let mut file = std::fs::File::create(args.outfile).unwrap();
-        file.write_all(&plaintext).unwrap();
+        cmd::Actions::Decode(args) => {
+            let img_format =
+                ImageFormat::from_path(&args.infile).expect("Could not find extension.");
+            match img_format {
+                ImageFormat::Bmp | ImageFormat::Png | ImageFormat::Tiff | ImageFormat::Ico => {
+                    let img = image::open(&args.infile).expect("Could not open input file");
+                    let image_bytes = img.as_bytes();
+
+                    let lsb_bits = extract_lsb(image_bytes);
+
+                    let input_data = convert_from_bits(&lsb_bits);
+                    let (encrypted, rest) = input_data.split_first().expect("Found no data");
+
+                    let data = match (*encrypted == 1, args.key) {
+                        (true, Some(key)) => {
+                            let (nonce_slice, ciphertext) = rest.split_at(12);
+                            let key = Sha256::digest(key);
+                            let cipher = Aes256Gcm::new(&key);
+                            let nonce = Nonce::from_slice(nonce_slice);
+
+                            cipher
+                                .decrypt(nonce, ciphertext)
+                                .expect("Could not decrypt stored data")
+                        }
+
+                        (false, _) => rest.to_vec(),
+                        (true, None) => panic!("The data is encrypted, requires a key to decrypt."),
+                    };
+
+                    std::fs::write(&args.outfile, data).expect("Could not write to output file");
+                }
+
+                ImageFormat::Gif => todo!("GIF files are currently not supported."),
+                ImageFormat::Jpeg => todo!("JPEG files are currently not supported."),
+
+                _ => {
+                    panic!("Image format not supported.")
+                }
+            }
+        }
+
+        cmd::Actions::Calculate(args) => {
+            let img_format =
+                ImageFormat::from_path(&args.image_path).expect("Could not find extension.");
+            match img_format {
+                ImageFormat::Bmp | ImageFormat::Png | ImageFormat::Tiff | ImageFormat::Ico => {
+                    let img =
+                        image::open(args.image_path).expect("Invalid/Not supported image file");
+
+                    let image_bytes = img.as_bytes();
+                    let storage_capacity = image_bytes.len() / 8 - 6;
+
+                    println!(
+                        "{storage_capacity} bytes of data can be stored in the image provided."
+                    );
+                }
+
+                ImageFormat::Gif => todo!("GIF files are currently not supported."),
+                ImageFormat::Jpeg => todo!("JPEG files are currently not supported."),
+
+                _ => {
+                    panic!("Image format not supported.")
+                }
+            }
+        }
     }
 }

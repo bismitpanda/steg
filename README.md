@@ -1,20 +1,30 @@
 # Steg
 
-Steg is a rust based tool for lsb based stegnography of lossless image files.
+Steg is a rust based tool for steganography of image files.
 
-*Note:* Tested on png files only
+Currently Supports:
+- **PNG**
+- **TIFF**
+- **BMP**
+- **ICO**
 
-## Usage
+# Note
+The JPEG steganography uses code from [`image`](https://crates.io/crates/image) crate and [`jpeg-decoder`](https://crates.io/crates/jpeg-decoder) crate.
 
-`steg.exe [OPTIONS] --pass-phrase <PASS_PHRASE> --infile <INFILE> --outfile <OUTFILE> <--encode|--decode>`
+- The `src/jpeg` folder of `steg` is a direct copy of `src/codecs/jpeg` of the `image` crate with some changes for steganography.
+- The `src/jpeg_decoder` folder of steg is a copy of `src` folder of the `jpeg-decoder` crate with some changes for steganography.
 
-### Options
+## Help
 
-- `-e, --encode`
-- `-d, --decode`
-- `-c, --pass-phrase <PASS_PHRASE>`
-- `-p, --picture <PICTURE>`
-- `-i, --infile <INFILE>`
-- `-o, --outfile <OUTFILE>`
-- `-h, --help                       Print help`
-- `-V, --version                    Print version`
+```
+Usage: steg.exe <COMMAND>
+
+Commands:
+  e, encode     Encode a message in to an image
+  d, decode     Extract the message stored in a message
+  c, calculate  Calculate the possible storage capacity of the image
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
